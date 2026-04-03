@@ -40,6 +40,7 @@ router.post("/supply-chains", upload.single("file"), async (req, res) => {
   try {
     let fileIpfsUri = "";
     let fileHttpUri = "";
+    
 
     /* -------- Upload File to IPFS -------- */
 
