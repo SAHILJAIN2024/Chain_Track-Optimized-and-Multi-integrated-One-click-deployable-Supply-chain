@@ -10,11 +10,9 @@ import { motion } from "framer-motion";
 import Link from "next/link";
 
 /* ---------------- CONSTANTS ---------------- */
-
 const FACTORY_ADDRESS = "0xf2F76eFB368c56817ED0bdeEFC7689DC859Eb467";
 
 /* ---------------- TYPES ---------------- */
-
 type SupplyChain = {
   contractAddress: string;
   creator: string;
@@ -22,8 +20,14 @@ type SupplyChain = {
   createdAt: number;
 };
 
-/* ---------------- COMPONENT ---------------- */
+type ChainStats = {
+  requesters: string[];
+  committers: string[];
+  requestCount: number;
+  commitCount: number;
+};
 
+/* ---------------- COMPONENT ---------------- */
 const Dashboard = () => {
   const { address, connectWallet } = useWallet();
 
@@ -34,12 +38,14 @@ const Dashboard = () => {
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("new");
 
-  /* -------- STATS -------- */
   const [totalRequests, setTotalRequests] = useState(0);
   const [totalCommits, setTotalCommits] = useState(0);
 
-  /* ---------------- LOAD DATA ---------------- */
+  const [chainStats, setChainStats] = useState<{
+    [key: string]: ChainStats;
+  }>({});
 
+  /* ---------------- LOAD DATA ---------------- */
   useEffect(() => {
     if (!address) return;
 
@@ -70,78 +76,57 @@ const Dashboard = () => {
 
         setChains(userChains);
 
-        
+        let totalReq = 0;
+        let totalCom = 0;
 
-let reqCount = 0;
-let commitCount = 0;
+        const statsMap: { [key: string]: ChainStats } = {};
 
-const fullData: any[] = [];
+        /* 🔥 LOOP THROUGH EACH CHAIN */
+        for (const chain of userChains) {
+          try {
+            const contract = new ethers.Contract(
+              chain.contractAddress,
+              CHAIN_ABI.abi,
+              provider
+            );
 
-for (const chain of userChains) {
-  try {
-    const contract = new ethers.Contract(
-      chain.contractAddress,
-      CHAIN_ABI.abi,
-      provider
-    );
+            const reqLogs = await contract.queryFilter(
+              contract.filters.RequestMinted()
+            );
 
-    const reqLogs = await contract.queryFilter(
-      contract.filters.RequestMinted()
-    );
+            const commitLogs = await contract.queryFilter(
+              contract.filters.CommitMinted()
+            );
 
-    const commitLogs = await contract.queryFilter(
-      contract.filters.CommitMinted()
-    );
+            const requesters = new Set<string>();
+            const committers = new Set<string>();
 
-    const requestsMap: any = {};
+            reqLogs.forEach((log: any) => {
+              requesters.add(log.args.to.toLowerCase());
+            });
 
-    /* -------- BUILD REQUESTS -------- */
-    reqLogs.forEach((log: any) => {
-      const tokenId = Number(log.args.tokenId);
+            commitLogs.forEach((log: any) => {
+              committers.add(log.args.to.toLowerCase());
+            });
 
-      requestsMap[tokenId] = {
-        id: tokenId,
-        uri: log.args.uri,
-        owner: log.args.to,
-        commits: []
-      };
-    });
+            statsMap[chain.contractAddress] = {
+              requesters: Array.from(requesters),
+              committers: Array.from(committers),
+              requestCount: reqLogs.length,
+              commitCount: commitLogs.length,
+            };
 
-    /* -------- ATTACH COMMITS -------- */
-    commitLogs.forEach((log: any) => {
-      const commitId = Number(log.args.tokenId);
-      const requestId = Number(log.args.requestId);
+            totalReq += reqLogs.length;
+            totalCom += commitLogs.length;
 
-      if (requestsMap[requestId]) {
-        requestsMap[requestId].commits.push({
-          id: commitId,
-          uri: log.args.uri,
-          owner: log.args.to
-        });
-      }
-    });
+          } catch (err) {
+            console.log("Event fetch error:", err);
+          }
+        }
 
-    const requestsArray = Object.values(requestsMap);
-
-    reqCount += requestsArray.length;
-    commitCount += commitLogs.length;
-
-    fullData.push({
-      chainAddress: chain.contractAddress,
-      name: chain.name,
-      requests: requestsArray
-    });
-
-  } catch (err) {
-    console.log("Full fetch error:", err);
-  }
-}
-
-/* OPTIONAL: STORE FULL DATA */
-console.log("FULL SUPPLY CHAIN DATA:", fullData);
-
-setTotalRequests(reqCount);
-setTotalCommits(commitCount);
+        setChainStats(statsMap);
+        setTotalRequests(totalReq);
+        setTotalCommits(totalCom);
 
       } catch (err) {
         console.error(err);
@@ -153,8 +138,7 @@ setTotalCommits(commitCount);
     loadChains();
   }, [address]);
 
-  /* ---------------- FILTER LOGIC ---------------- */
-
+  /* ---------------- FILTER ---------------- */
   useEffect(() => {
     let temp = [...chains];
 
@@ -164,17 +148,16 @@ setTotalCommits(commitCount);
       );
     }
 
-    if (sort === "new") {
-      temp.sort((a, b) => b.createdAt - a.createdAt);
-    } else {
-      temp.sort((a, b) => a.createdAt - b.createdAt);
-    }
+    temp.sort((a, b) =>
+      sort === "new"
+        ? b.createdAt - a.createdAt
+        : a.createdAt - b.createdAt
+    );
 
     setFilteredChains(temp);
   }, [search, sort, chains]);
 
   /* ---------------- UI ---------------- */
-
   return (
     <div className="min-h-screen bg-[#050505] text-white">
       <Navbar />
@@ -186,129 +169,129 @@ setTotalCommits(commitCount);
           DASHBOARD <span className="text-emerald-500">SYSTEM</span>
         </h1>
 
-        {/* ---------------- STATS BAR ---------------- */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
-
+        {/* GLOBAL STATS */}
+        <div className="grid md:grid-cols-3 gap-6 mb-12">
           <StatCard label="TOTAL CHAINS" value={chains.length} />
           <StatCard label="TOTAL REQUESTS" value={totalRequests} />
           <StatCard label="TOTAL COMMITS" value={totalCommits} />
-
         </div>
 
-        {/* ---------------- SEARCH + FILTER ---------------- */}
-        <div className="flex flex-col md:flex-row gap-4 mb-10">
-
+        {/* SEARCH */}
+        <div className="flex gap-4 mb-10">
           <input
-            placeholder="Search by chain name..."
+            placeholder="Search chain..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="flex-1 px-4 py-3 bg-zinc-900 border border-white/10 rounded-xl"
+            className="flex-1 px-4 py-3 bg-zinc-900 border rounded-xl"
           />
 
           <select
             value={sort}
             onChange={(e) => setSort(e.target.value)}
-            className="px-4 py-3 bg-zinc-900 border border-white/10 rounded-xl"
+            className="px-4 py-3 bg-zinc-900 border rounded-xl"
           >
             <option value="new">Newest</option>
             <option value="old">Oldest</option>
           </select>
-
         </div>
 
-        {/* ---------------- CONTENT ---------------- */}
+        {/* CONTENT */}
         {!address ? (
           <div className="text-center py-32">
-            <button onClick={connectWallet} className="px-8 py-4 bg-white text-black rounded-full">
+            <button
+              onClick={connectWallet}
+              className="px-8 py-4 bg-white text-black rounded-full"
+            >
               CONNECT WALLET
             </button>
           </div>
         ) : loading ? (
           <p>Loading...</p>
-        ) : filteredChains.length === 0 ? (
-          <p>No results found</p>
         ) : (
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {filteredChains.map((chain, i) => (
-             
-<Link
-                key={chain.contractAddress}
-                href={`/chain/${chain.contractAddress}`}
-              >
-                <motion.div
-                  initial={{ opacity: 0, y: 40 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.08 }}
-                  whileHover={{ scale: 1.04 }}
-                  className="group relative p-8 rounded-[2rem] bg-zinc-900/40 backdrop-blur-xl border border-white/5 hover:border-emerald-500/40 transition-all cursor-pointer shadow-xl"
+
+            {filteredChains.map((chain, i) => {
+              const stats = chainStats[chain.contractAddress];
+
+              return (
+                <Link
+                  key={chain.contractAddress}
+                  href={`/chain/${chain.contractAddress}`}
                 >
-                  {/* HOVER GLOW */}
-                  <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition">
-                    <div className="absolute inset-0 rounded-[2rem] bg-emerald-500/10 blur-xl" />
-                  </div>
+                  <motion.div
+                    initial={{ opacity: 0, y: 40 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: i * 0.08 }}
+                    whileHover={{ scale: 1.05 }}
+                    className="p-8 rounded-[2rem] bg-zinc-900/40 border hover:border-emerald-500 cursor-pointer"
+                  >
 
-                  {/* CONTENT */}
-                  <div className="relative z-10">
-
-                    {/* TITLE */}
-                    <h2 className="text-2xl font-bold mb-3 tracking-tight">
+                    <h2 className="text-2xl font-bold mb-2">
                       {chain.name}
                     </h2>
 
-                    {/* ADDRESS */}
-                    <p className="text-xs text-zinc-400 font-mono break-all">
+                    <p className="text-xs text-zinc-400 break-all mb-4">
                       {chain.contractAddress}
                     </p>
 
-                    {/* META */}
-                    <div className="mt-6 space-y-1">
-                      <p className="text-[10px] text-zinc-500 uppercase font-bold">
-                        Creator
-                      </p>
-                      <p className="text-xs text-zinc-300 font-mono">
-                        {chain.creator.slice(0, 6)}...{chain.creator.slice(-4)}
-                      </p>
+                    {/* CREATOR */}
+                    <p className="text-xs text-zinc-500">Creator</p>
+                    <p className="text-xs font-mono mb-4">
+                      {chain.creator.slice(0, 6)}...
+                      {chain.creator.slice(-4)}
+                    </p>
+
+                    {/* COUNTS */}
+                    <div className="flex justify-between text-xs mb-4">
+                      <span>📦 {stats?.requestCount || 0} Requests</span>
+                      <span>⚡ {stats?.commitCount || 0} Commits</span>
                     </div>
 
-                    {/* TIMESTAMP */}
-                    <p className="text-[10px] text-zinc-600 mt-6 font-mono">
+                    {/* REQUESTERS */}
+                    <p className="text-[10px] text-zinc-500 uppercase">
+                      Requesters
+                    </p>
+                    <div className="text-xs font-mono mb-3">
+                      {stats?.requesters?.slice(0, 2).map((a, i) => (
+                        <p key={i}>
+                          {a.slice(0, 6)}...{a.slice(-4)}
+                        </p>
+                      ))}
+                    </div>
+
+                    {/* COMMITTERS */}
+                    <p className="text-[10px] text-zinc-500 uppercase">
+                      Committers
+                    </p>
+                    <div className="text-xs font-mono">
+                      {stats?.committers?.slice(0, 2).map((a, i) => (
+                        <p key={i}>
+                          {a.slice(0, 6)}...{a.slice(-4)}
+                        </p>
+                      ))}
+                    </div>
+
+                    <p className="text-[10px] text-zinc-600 mt-4">
                       {new Date(chain.createdAt * 1000).toLocaleString()}
                     </p>
 
-                    {/* TAG */}
-                    <div className="mt-4">
-                      <span className="text-[9px] px-2 py-1 rounded bg-white/5 border border-white/10 text-zinc-500 font-mono">
-                        ON-CHAIN
-                      </span>
-                    </div>
-                  </div>
-                </motion.div>
-              </Link>
-            ))}
+                  </motion.div>
+                </Link>
+              );
+            })}
           </div>
         )}
-
       </div>
-
-      {/* FLOATING CTA */}
-      <Link href="/repository">
-        <button className="fixed bottom-8 right-8 px-6 py-4 rounded-full bg-emerald-500 text-black font-bold hover:scale-110 transition">
-          + CREATE CHAIN
-        </button>
-      </Link>
-
     </div>
   );
 };
 
 /* ---------------- STAT CARD ---------------- */
-
 const StatCard = ({ label, value }: { label: string; value: number }) => (
-  <div className="p-6 bg-zinc-900/40 border border-white/10 rounded-2xl">
+  <div className="p-6 bg-zinc-900/40 border rounded-2xl">
     <p className="text-xs text-zinc-500">{label}</p>
     <h2 className="text-3xl font-bold mt-2 text-emerald-400">{value}</h2>
   </div>
 );
 
 export default Dashboard;
-
