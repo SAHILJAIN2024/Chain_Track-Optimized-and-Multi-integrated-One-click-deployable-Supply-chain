@@ -42,19 +42,15 @@ export default function ChainPage() {
     if (!address) return;
 
     const init = async () => {
-      const provider = new ethers.BrowserProvider(
-        (window as any).ethereum
-      );
-
-      const signer = await provider.getSigner();
+      const provider = new ethers.BrowserProvider((window as any).ethereum);
 
       const instance = new ethers.Contract(
         contractAddress,
         CONTRACT_ABI.abi,
-        signer
+        provider
       );
 
-      await loadEvents(instance, address);
+      await loadEvents(instance);
     };
 
     init();
@@ -62,7 +58,7 @@ export default function ChainPage() {
 
   /* ---------------- LOAD EVENTS ---------------- */
 
-  const loadEvents = async (instance: any, wallet: string) => {
+  const loadEvents = async (instance: any) => {
     const reqLogs = await instance.queryFilter(
       instance.filters.RequestMinted()
     );
@@ -71,69 +67,50 @@ export default function ChainPage() {
       instance.filters.CommitMinted()
     );
 
-    const allRequests: Request[] = reqLogs.map((log: any) => ({
-      tokenId: Number(log.args.tokenId),
-      to: log.args.to.toLowerCase(),
-      uri: log.args.uri,
-    }));
-
-    const allCommits: Commit[] = comLogs.map((log: any) => ({
-      tokenId: Number(log.args.tokenId),
-      requestId: Number(log.args.requestId),
-      to: log.args.to.toLowerCase(),
-      uri: log.args.uri,
-    }));
-
-    const userAddress = wallet.toLowerCase();
-
-    const userRequests = allRequests.filter(
-      (r: Request) => r.to === userAddress
+    setRequests(
+      reqLogs.map((log: any) => ({
+        tokenId: Number(log.args.tokenId),
+        to: log.args.to,
+        uri: log.args.uri,
+      }))
     );
 
-    const userRequestIds = userRequests.map((r) => r.tokenId);
-
-    const userCommits = allCommits.filter(
-      (c: Commit) =>
-        c.to === userAddress ||
-        userRequestIds.includes(c.requestId)
+    setCommits(
+      comLogs.map((log: any) => ({
+        tokenId: Number(log.args.tokenId),
+        requestId: Number(log.args.requestId),
+        to: log.args.to,
+        uri: log.args.uri,
+      }))
     );
-
-    setRequests(userRequests);
-    setCommits(userCommits);
   };
 
   /* ---------------- LOAD IPFS ---------------- */
 
   useEffect(() => {
     const load = async () => {
-      const cache: Record<string, any> = {};
+      const cache: any = {};
 
       for (const r of requests) {
-        if (!metadata[r.tokenId]) {
-          cache[r.tokenId] = await fetchIPFS(r.uri);
-        }
+        cache[r.tokenId] = await fetchIPFS(r.uri);
       }
 
       for (const c of commits) {
-        if (!metadata[c.tokenId]) {
-          cache[c.tokenId] = await fetchIPFS(c.uri);
-        }
+        cache[c.tokenId] = await fetchIPFS(c.uri);
       }
 
-      setMetadata((prev) => ({ ...prev, ...cache }));
+      setMetadata(cache);
     };
 
     if (requests.length || commits.length) load();
   }, [requests, commits]);
 
-  /* ---------------- STATUS ---------------- */
+  /* ---------------- GRAPH HELPER ---------------- */
 
-  const getStatus = (requestId: number) => {
-    const related = commits.filter((c) => c.requestId === requestId);
+  const getGraphFlow = (reqId: number) => {
+    const relatedCommits = commits.filter((c) => c.requestId === reqId);
 
-    if (related.length === 0) return { label: "CREATED", step: 0 };
-    if (related.length < 3) return { label: "IN PROGRESS", step: 1 };
-    return { label: "COMPLETED", step: 2 };
+    return [reqId, ...relatedCommits.map((c) => c.tokenId)];
   };
 
   /* ---------------- UI ---------------- */
@@ -142,20 +119,14 @@ export default function ChainPage() {
     <div className="min-h-screen bg-[#050505] text-white">
       <Navbar />
 
-      {/* BACKGROUND GLOW */}
-      <div className="fixed inset-0 pointer-events-none">
-        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-emerald-500/10 blur-[120px]" />
-        <div className="absolute bottom-[-10%] right-[-10%] w-[30%] h-[30%] bg-cyan-500/10 blur-[120px]" />
-      </div>
-
-      <div className="max-w-6xl mx-auto px-6 pt-32 pb-20 relative z-10">
+      <div className="max-w-6xl mx-auto px-6 pt-32 pb-20">
 
         {/* HEADER */}
-        <h1 className="text-5xl md:text-6xl font-black mb-10">
-          CHAIN <span className="text-emerald-500">DETAILS</span>
+        <h1 className="text-6xl font-black mb-12">
+          CHAIN <span className="text-emerald-500">TIMELINE</span>
         </h1>
 
-        {/* ACTION BUTTONS */}
+        {/* ACTIONS */}
         <div className="flex gap-4 mb-12">
           <button
             onClick={() => router.push(`/chain/${contractAddress}/create-request`)}
@@ -184,64 +155,138 @@ export default function ChainPage() {
           </button>
         </div>
 
-        {/* REQUESTS */}
-        <div className="space-y-10">
+        {/* REQUEST TIMELINE */}
+        <div className="space-y-16">
+
           {requests.map((req, idx) => {
-            const status = getStatus(req.tokenId);
+            const flow = getGraphFlow(req.tokenId);
+            const reqMeta = metadata[req.tokenId];
 
             return (
               <motion.div
                 key={req.tokenId}
-                initial={{ opacity: 0, y: 30 }}
+                initial={{ opacity: 0, y: 40 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: idx * 0.08 }}
-                className="p-8 rounded-[2rem] bg-zinc-900/40 border border-white/5 backdrop-blur-xl"
+                className="p-8 rounded-[2rem] bg-zinc-900/40 border border-white/5"
               >
-                {/* HEADER */}
-                <div className="flex justify-between items-center mb-6">
-                  <h2 className="text-xl font-bold">
-                    Request #{req.tokenId}
-                  </h2>
 
-                  <span className="text-xs font-mono text-emerald-400">
-                    {status.label}
-                  </span>
+                {/* TITLE */}
+                <h2 className="text-2xl font-bold mb-4">
+                  Request #{req.tokenId}
+                </h2>
+
+                {/* PROCESS FLOW */}
+                {reqMeta?.attributes && (
+                  <div className="flex flex-wrap gap-2 mb-6">
+                    {reqMeta.attributes
+                      .find((a: any) => a.trait_type === "Process Steps")
+                      ?.value?.split(", ")
+                      .map((step: string, i: number) => (
+                        <span
+                          key={i}
+                          className="px-3 py-1 bg-emerald-500/20 text-xs rounded-full"
+                        >
+                          {step}
+                        </span>
+                      ))}
+                  </div>
+                )}
+
+                {/* GRAPH VISUALIZATION */}
+                <div className="flex items-center gap-4 overflow-x-auto mb-8">
+
+                  {flow.map((id, i) => (
+                    <div key={i} className="flex items-center gap-2">
+
+                      {/* NODE */}
+                      <div className="flex flex-col gap-1">
+
+  {/* TOP ROW → ID + PROCESS TAG */}
+  <div className="px-4 py-2 bg-black/50 border border-white/10 rounded-xl text-xs font-mono flex items-center gap-2">
+    
+    {/* TOKEN ID */}
+    <span>#{id}</span>
+
+    {/* PROCESS TAG */}
+    {metadata[id]?.attributes && (
+      <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-500 rounded-full text-xs">
+        {
+          metadata[id].attributes.find(
+            (a: any) => a.trait_type === "Process Steps"
+          )?.value
+        }
+      </span>
+    )}
+  </div>
+
+  {/* 🔥 AUTHORITY BELOW */}
+  {metadata[id]?.attributes && (
+    <div className="text-[10px] text-zinc-500 font-mono px-1">
+      Authority: {
+        metadata[id].attributes.find(
+          (a: any) => a.trait_type === "Contributor"
+        )?.value || "Unknown"
+      }
+    </div>
+  )}
+
+</div>
+
+                      {/* ARROW */}
+                      {i !== flow.length - 1 && (
+                        <div className="w-6 h-[2px] bg-emerald-500" />
+                      )}
+                    </div>
+                  ))}
+
                 </div>
 
-                {/* PROGRESS BAR */}
-                <div className="h-1 w-full bg-white/5 rounded mb-6">
-                  <div
-                    className="h-full bg-emerald-500"
-                    style={{ width: `${(status.step / 2) * 100}%` }}
-                  />
+                {/* REQUEST META */}
+                <div className="mb-6">
+                  <RenderIPFSContent data={reqMeta} />
                 </div>
 
-                {/* METADATA */}
-                <RenderIPFSContent data={metadata[req.tokenId]} />
+                {/* TIMELINE */}
+                <div className="border-l border-white/10 pl-6 space-y-6">
 
-                {/* COMMITS */}
-                <div className="mt-6 space-y-4">
                   {commits
                     .filter((c) => c.requestId === req.tokenId)
-                    .map((c) => (
-                      <div
+                    .map((c, i) => (
+                      <motion.div
                         key={c.tokenId}
-                        className="p-4 bg-black/40 border border-white/5 rounded-xl"
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: i * 0.05 }}
+                        className="relative"
                       >
-                        <p className="text-xs text-zinc-400 mb-2">
-                          Commit #{c.tokenId}
-                        </p>
 
-                        <RenderIPFSContent data={metadata[c.tokenId]} />
-                      </div>
+                        {/* DOT */}
+                        <div className="absolute -left-[11px] top-2 w-3 h-3 bg-emerald-500 rounded-full" />
+
+                        {/* CARD */}
+                        <div className="p-4 bg-black/40 border border-white/5 rounded-xl">
+
+                          <p className="text-xs text-zinc-400 mb-2">
+                            Commit #{c.tokenId}
+                          </p>
+
+                          <RenderIPFSContent data={metadata[c.tokenId]} />
+
+                        </div>
+                      </motion.div>
                     ))}
+
                 </div>
+
               </motion.div>
             );
           })}
-        </div>
 
+        </div>
       </div>
     </div>
   );
 }
+
+
