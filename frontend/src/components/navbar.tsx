@@ -67,7 +67,7 @@ export default function Navbar() {
               className="text-xs font-mono uppercase tracking-[0.2em] text-zinc-400 hover:text-white transition-colors cursor-pointer"
               onClick={() => router.push("/market")}
             >
-              Community
+              Visual Tracking
             </button>
           </li>
           
